@@ -9,8 +9,18 @@ packages = [{include = "borg_lockservice"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
+uvicorn = {extras = ["standard"], version = "^0.23.2"}
+absl-py = "^1.4.0"
 
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.7.0"
+flake8 = "^6.1.0"
+mypy = "^1.5.1"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+borg_lockservice = 'borg_lockservice:run'
