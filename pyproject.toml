@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "borg-lockservice"
+version = "0.1.0"
+description = "Service to manage locking borgbackup repositiories for remote sync processes such as an offsite sync of the repos."
+authors = ["Jinna Kiisuo <jinna+git@nocturnal.fi>"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "borg_lockservice"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

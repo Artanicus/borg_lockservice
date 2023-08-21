@@ -1,0 +1,4 @@
+*.flags
+.env*
+__pycache__
+*.pyc

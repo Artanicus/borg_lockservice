@@ -1,0 +1,1 @@
+This is highly WIP. The design intent is to have a tiny service running on the node with borgbackup repos to handle locking them. This allows dependent upstream services, such as offsite sync jobs, to perform their work without having write access to the repositories.
