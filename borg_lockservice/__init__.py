@@ -1,9 +1,11 @@
-from absl import flags, logging, app
+from absl import flags
 import os, sys
 import uvicorn
 
+from fastapi import FastAPI
 
 FLAGS = flags.FLAGS
+app = FastAPI()
 
 PREFIX = "BORG_LOCKSERVICE"
 
@@ -19,31 +21,23 @@ flags.DEFINE_integer(
     "Listen port for the service. Defaults to 8000",
 )
 
-
-async def main(scope, receive, send):
-    assert scope['type'] == 'http'
-
-    await send({
-        'type': 'http.response.start',
-        'status': 200,
-        'headers': [
-            [b'content-type', b'text/plain'],
-        ],
-    })
-    await send({
-        'type': 'http.response.body',
-        'body': bytes(f"Hewwo World :3 .. I'm listening on {FLAGS.port}", 'utf-8'),
-    })
+flags.DEFINE_boolean(
+    "dev",
+    os.getenv(f"{PREFIX}_DEV", False),
+    "Enable development mode. Defaults to False, should not be enabled in production.",
+)
 
 
-def run_uvicorn(argv):
-    del argv
-    logging.info(f"Will listen on {FLAGS.host}:{FLAGS.port}")
-    uvicorn.run("borg_lockservice:main", host=FLAGS.host, port=FLAGS.port)
+@app.get("/")
+async def root():
+    return {
+        'message': f"uwu :3",
+    }
 
-# script endpoint installed by package
+
 def run():
-    app.run(run_uvicorn)
+    FLAGS(sys.argv)
+    uvicorn.run("borg_lockservice:app", host=FLAGS.host, port=FLAGS.port, reload=FLAGS.dev)
 
 
 if __name__ == "__main__":

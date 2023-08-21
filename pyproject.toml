@@ -11,6 +11,7 @@ packages = [{include = "borg_lockservice"}]
 python = "^3.11"
 uvicorn = {extras = ["standard"], version = "^0.23.2"}
 absl-py = "^1.4.0"
+fastapi = "^0.101.1"
 
 
 [tool.poetry.group.dev.dependencies]
