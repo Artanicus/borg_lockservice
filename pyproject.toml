@@ -12,12 +12,15 @@ python = "^3.11"
 uvicorn = {extras = ["standard"], version = "^0.23.2"}
 absl-py = "^1.4.0"
 fastapi = "^0.101.1"
+borgbackup = "^1.2.4"
 
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.7.0"
 flake8 = "^6.1.0"
 mypy = "^1.5.1"
+types-pyyaml = "^6.0.12.11"
+types-ujson = "^5.8.0.1"
 
 [build-system]
 requires = ["poetry-core"]
