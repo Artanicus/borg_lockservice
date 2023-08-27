@@ -28,3 +28,11 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 borg_lockservice = 'borg_lockservice:run'
+
+[tool.mypy]
+follow_imports = "silent"
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "absl"
+ignore_missing_imports = true

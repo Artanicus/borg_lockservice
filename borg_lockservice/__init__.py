@@ -3,17 +3,18 @@ import os
 import sys
 import uvicorn
 
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBearer
-
+from fastapi.security.http import HTTPAuthorizationCredentials
 import subprocess
-import pathlib
+from pathlib import Path
+
 
 # Get all directories under the given paths
-def get_available_repos(directory: str) -> list[pathlib.Path]:
-    path = pathlib.Path(directory)
+def get_available_repos(directory: str) -> list[Path]:
+    path = Path(directory)
     return [f for f in path.iterdir() if f.is_dir()]
 
 
@@ -52,11 +53,13 @@ flags.DEFINE_boolean(
     os.getenv(f"{PREFIX}_DEV", False),
     "Enable development mode. Defaults to False, should not be enabled in production.",
 )
-flags.mark_flag_as_required('repodir')
+
+flags.mark_flag_as_required("token")
+flags.mark_flag_as_required("repodir")
 
 FLAGS(sys.argv)
 BEARER_TOKEN = FLAGS.token
-REPOS: list[pathlib.Path] = get_available_repos(FLAGS.repodir)
+REPOS: list[Path] = get_available_repos(FLAGS.repodir)
 
 
 @app.get("/")
@@ -69,12 +72,12 @@ async def root():
 @app.get("/lock/{repo}")
 async def lock(
     repo: str,
-    token: Annotated[str, Depends(auth)],
+    token: Annotated[HTTPAuthorizationCredentials, Depends(auth)],
     timeout_seconds: int = 3600,
     duration_minutes: int = 45,
 ):
     if token.credentials == BEARER_TOKEN:
-        repo_path: pathlib.Path = get_repo_path(repo)
+        repo_path: Optional[Path] = get_repo_path(repo)
         if repo_path:
             acquire_lock(repo_path, timeout_seconds, duration_minutes)
             return {"message": f"Locked {repo} for a max of {duration_minutes}m"}
@@ -99,13 +102,14 @@ async def list_locks():
     return {"repos": REPOS}
 
 
-def get_repo_path(target: str) -> pathlib.Path:
+def get_repo_path(target: str) -> Optional[Path]:
     for repo in REPOS:
         if repo.name == target:
             return repo
     return None
 
-def acquire_lock(repo: pathlib.Path, timeout_seconds: int, duration_minutes: int):
+
+def acquire_lock(repo: Path, timeout_seconds: int, duration_minutes: int):
     try:
         subprocess.run(
             [
