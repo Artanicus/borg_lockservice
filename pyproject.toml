@@ -27,7 +27,8 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
-borg_lockservice = 'borg_lockservice:run'
+borg_lockservice = 'borg_lockservice.service:run'
+lockservice_envoy = 'borg_lockservice.envoy:run'
 
 [tool.mypy]
 follow_imports = "silent"
