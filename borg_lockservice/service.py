@@ -2,6 +2,7 @@ from absl import flags
 import os
 import sys
 import uvicorn
+import logging
 
 from typing import Annotated, Optional
 
@@ -9,29 +10,18 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBearer
 from fastapi.security.http import HTTPAuthorizationCredentials
 from fastapi.logger import logger
-import logging
+from contextlib import asynccontextmanager
 
 import subprocess
 from pathlib import Path
 
 import socket
 import tempfile
-from . import SocketMessage
-
-import time
-
-
-# Get all directories under the given paths
-def get_available_repos(directory: str) -> list[Path]:
-    path = Path(directory)
-    return [f for f in path.iterdir() if f.is_dir()]
-
+from . import SocketMessage, Lock
 
 FLAGS = flags.FLAGS
-app = FastAPI()
-auth = HTTPBearer()
-
 PREFIX = "BORG_LOCKSERVICE"
+auth = HTTPBearer()
 
 flags.DEFINE_string(
     "token",
@@ -66,12 +56,20 @@ flags.DEFINE_boolean(
 flags.mark_flag_as_required("token")
 flags.mark_flag_as_required("repodir")
 
-FLAGS(sys.argv)
-BEARER_TOKEN = FLAGS.token
-REPOS: list[Path] = get_available_repos(FLAGS.repodir)
 
-log = logging.getLogger('uvicorn.error')
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    FLAGS(sys.argv)
+    app.repos = get_available_repos(FLAGS.repodir)  # type: ignore[attr-defined]
+    app.locks = {}  # type: ignore[attr-defined]
+    yield
+
+
+FLAGS(sys.argv)
+app = FastAPI(lifespan=lifespan)
+log = logging.getLogger("uvicorn.error")
 logger.setLevel(logging.DEBUG if FLAGS.dev else logging.INFO)
+
 
 @app.get("/")
 async def root():
@@ -86,31 +84,38 @@ async def lock(
     token: Annotated[HTTPAuthorizationCredentials, Depends(auth)],
     timeout_seconds: int = 3600,
 ):
-    if token.credentials == BEARER_TOKEN:
+    if token.credentials == FLAGS.token:
         repo_path: Optional[Path] = get_repo_path(repo)
         if repo_path:
-
             # Listen for messaging from the envoy to confirm a lock has been acquired
             with tempfile.TemporaryDirectory() as socket_dir:
                 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                sock.settimeout(timeout_seconds)
                 sock_path = socket_dir / Path(f"{PREFIX}_envoy.sock")
                 start_envoy(repo_path, sock_path, timeout_seconds)
                 log.info(f"Started envoy, waiting on {sock_path}")
                 sock.bind(bytes(sock_path))
                 log.info("waiting for a connection")
                 sock.listen(1)
-                connection, _ = sock.accept()
-                log.debug(f"Envoy connected")
+                try:
+                    connection, _ = sock.accept()
+                    log.debug("Envoy connected")
+                except socket.timeout:
+                    log.info("Envoy timed out, cannot acquire lock!")
+                    raise HTTPException(status_code=423)  # HTTP error: Locked
                 try:
                     while True:
                         data = connection.recv(16)
-                        log.debug(f"Received: {data}")
+                        log.debug(f"Received: {str(data)}")
                         if not data:
                             log.debug("Transmission done")
                             break
                         else:
                             if data == SocketMessage.LOCK_ACQUIRED.value:
-                                log.info('Envoy confirmed lock')
+                                log.info("Envoy confirmed lock")
+                                app.locks[repo] = Lock(
+                                    socket=sock_path, pid=42, locked=True
+                                )  # type: ignore[attr-defined]
                                 break
 
                 finally:
@@ -134,14 +139,17 @@ async def status(repo: str):
 
 @app.get("/list")
 async def list_locks():
-    log.info('Test INFO')
-    log.error('Test ERROR')
-    log.debug('Test DEBUG')
-    return {"repos": REPOS}
+    return {"repos": app.locks}  # type: ignore[attr-defined]
+
+
+# Get all directories under the given paths
+def get_available_repos(directory: str) -> list[Path]:
+    path = Path(directory)
+    return [f for f in path.iterdir() if f.is_dir()]
 
 
 def get_repo_path(target: str) -> Optional[Path]:
-    for repo in REPOS:
+    for repo in app.repos:  # type: ignore[attr-defined]
         if repo.name == target:
             return repo
     return None
@@ -162,12 +170,13 @@ def start_envoy(repo: Path, socket: Path, timeout_seconds: int):
 
 
 def run():
+    FLAGS(sys.argv)
     uvicorn.run(
         "borg_lockservice.service:app",
         host=FLAGS.host,
         port=FLAGS.port,
         reload=FLAGS.dev,
-        log_level="debug" if FLAGS.dev else "info"
+        log_level="debug" if FLAGS.dev else "info",
     )
 
 

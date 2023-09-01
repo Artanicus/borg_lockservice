@@ -1,12 +1,8 @@
 from absl import flags, app, logging
 
-from fastapi import FastAPI, HTTPException
-from pathlib import Path
-
 import socket
 import sys
 import time
-from datetime import datetime, timedelta
 
 from . import SocketMessage
 
@@ -47,7 +43,7 @@ def main(argv):
 
 def signal_handler(sig, frame):
     logging.info(f"Exiting gracefully for {sig}")
-    SOCKET.sendall(SocketMessage.EXITING.value)
+    SOCKET.sendall(SocketMessage.LOCK_LOST.value)
     SOCKET.close()
 
 
