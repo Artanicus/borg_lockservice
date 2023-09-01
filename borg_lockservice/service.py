@@ -177,6 +177,7 @@ def run():
         port=FLAGS.port,
         reload=FLAGS.dev,
         log_level="debug" if FLAGS.dev else "info",
+        workers=5 if not FLAGS.dev else 1,
     )
 
 
