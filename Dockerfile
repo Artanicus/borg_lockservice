@@ -19,5 +19,6 @@ FROM python:3.11-slim-buster
 WORKDIR /srv
 COPY --from=builder /build/*.whl /build/dist/*.whl ./
 RUN pip install *.whl
+RUN rm *.whl
 
 ENTRYPOINT ["borg_lockservice"]
