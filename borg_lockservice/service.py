@@ -136,54 +136,61 @@ async def lock(
     token: Annotated[HTTPAuthorizationCredentials, Depends(auth)],
     timeout_seconds: int = 3600,
 ):
-    if token.credentials == FLAGS.token:
-        repo_path: Optional[Path] = get_repo_path(repo)
-        if repo_path:
-            # Listen for messaging from the envoy to confirm a lock has been acquired
-            with tempfile.TemporaryDirectory() as socket_dir:
-                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                sock.settimeout(timeout_seconds)
-                sock_path = socket_dir / Path(f"{PREFIX}_envoy.sock")
-                start_envoy(repo_path, sock_path, timeout_seconds)
-                app.state.log.info(f"Started envoy, waiting on {sock_path}")
-                sock.bind(bytes(sock_path))
-                sock.listen(1)
-                try:
-                    connection, _ = sock.accept()
-                    app.state.log.debug("Envoy connected")
-                except socket.timeout:
-                    app.state.log.info("Envoy timed out, cannot acquire lock!")
-                    raise HTTPException(status_code=423)  # HTTP error: Locked
-                try:
-                    while True:
-                        data = connection.recv(16)
-                        pid = int.from_bytes(data)
-                        app.state.log.debug(f"Envoy pid: {pid}")
-                        if not data:
-                            # When transmission ends we stop listening
-                            break
-                        else:
-                            app.state.log.info("Envoy confirmed lock")
-                            lock = await Lock.create(repo, pid)
-                            app.state.locks[repo] = lock
-                            break
-
-                finally:
-                    connection.close()
-            return {"message": f"Locked {repo}.", "pid": pid}
-        else:
-            raise HTTPException(status_code=404)
-    else:
+    if token.credentials != FLAGS.token:
         raise HTTPException(status_code=403)
+
+    repo_path: Optional[Path] = get_repo_path(repo)
+    if not repo_path:
+        raise HTTPException(status_code=404)
+
+    # Listen for messaging from the envoy to confirm a lock has been acquired
+    with tempfile.TemporaryDirectory() as socket_dir:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(timeout_seconds)
+        sock_path = socket_dir / Path(f"{PREFIX}_envoy.sock")
+        start_envoy(repo_path, sock_path, timeout_seconds)
+        app.state.log.info(f"Started envoy, waiting on {sock_path}")
+        sock.bind(bytes(sock_path))
+        sock.listen(1)
+        try:
+            connection, _ = sock.accept()
+            app.state.log.debug("Envoy connected")
+        except socket.timeout:
+            app.state.log.info("Envoy timed out, cannot acquire lock!")
+            raise HTTPException(status_code=423)  # HTTP error: Locked
+        try:
+            while True:
+                data = connection.recv(16)
+                pid = int.from_bytes(data)
+                app.state.log.debug(f"Envoy pid: {pid}")
+                if not data:
+                    # When transmission ends we stop listening
+                    break
+                else:
+                    app.state.log.info("Envoy confirmed lock")
+                    lock = await Lock.create(repo, pid)
+                    app.state.locks[repo] = lock
+                    break
+
+        finally:
+            connection.close()
+    return {"message": f"Locked", "pid": pid}
 
 
 @app.get("/unlock/{repo}")
-async def unlock(repo: str, pid: int):
+async def unlock(
+    repo: str,
+    pid: int,
+    token: Annotated[HTTPAuthorizationCredentials, Depends(auth)],
+):
+    if token.credentials != FLAGS.token:
+        raise HTTPException(status_code=403)
     if repo not in app.state.locks:
         raise HTTPException(status_code=404)
     lock = app.state.locks[repo]
     if pid != await lock.pid:
         raise HTTPException(status_code=403)
+
     try:
         await lock.kill()  # Kill the envoy releasing the lock
     except OSError as e:
@@ -195,15 +202,26 @@ async def unlock(repo: str, pid: int):
 
 
 @app.get("/status/{repo}")
-async def status(repo: str):
+async def status(
+    repo: str,
+    token: Annotated[HTTPAuthorizationCredentials, Depends(auth)],
+):
+    if token.credentials != FLAGS.token:
+        raise HTTPException(status_code=403)
     if repo not in app.state.locks:
         return {"message": "Unknown"}
+
     pid = await app.state.locks[repo].pid
     return {"message": "Locked", "pid": pid}
 
 
 @app.get("/list")
-async def list_locks():
+async def list_locks(
+    token: Annotated[HTTPAuthorizationCredentials, Depends(auth)],
+):
+    if token.credentials != FLAGS.token:
+        raise HTTPException(status_code=403)
+
     return {"repos": app.state.repos}
 
 
