@@ -13,6 +13,8 @@ uvicorn = {extras = ["standard"], version = "^0.23.2"}
 absl-py = "^1.4.0"
 fastapi = "^0.101.1"
 borgbackup = "^1.2.5"
+aiocache = {extras = ["redis"], version = "^0.12.2"}
+psutil = "^5.9.5"
 
 
 [tool.poetry.group.dev.dependencies]
@@ -21,6 +23,7 @@ flake8 = "^6.1.0"
 mypy = "^1.5.1"
 types-pyyaml = "^6.0.12.11"
 types-ujson = "^5.8.0.1"
+types-psutil = "^5.9.5.16"
 
 [build-system]
 requires = ["poetry-core"]
@@ -36,4 +39,7 @@ check_untyped_defs = true
 
 [[tool.mypy.overrides]]
 module = "absl"
+ignore_missing_imports = true
+[[tool.mypy.overrides]]
+module = "aiocache"
 ignore_missing_imports = true

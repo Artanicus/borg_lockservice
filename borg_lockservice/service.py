@@ -1,4 +1,5 @@
 from absl import flags
+from absl import app as absl_app
 import os
 import sys
 import uvicorn
@@ -11,13 +12,15 @@ from fastapi.security import HTTPBearer
 from fastapi.security.http import HTTPAuthorizationCredentials
 from fastapi.logger import logger
 from contextlib import asynccontextmanager
-
-import subprocess
+from aiocache import Cache
 from pathlib import Path
 
+import subprocess
+import signal
+import psutil
 import socket
 import tempfile
-from . import SocketMessage, Lock
+
 
 FLAGS = flags.FLAGS
 PREFIX = "BORG_LOCKSERVICE"
@@ -53,22 +56,71 @@ flags.DEFINE_boolean(
     "Enable development mode. Defaults to False, should not be enabled in production.",
 )
 
+flags.DEFINE_string(
+    "redis_host",
+    os.getenv(f"{PREFIX}_REDIS_HOST", None),
+    "Host portion of a redis server used for keeping state.",
+)
+flags.DEFINE_integer(
+    "redis_port",
+    os.getenv(f"{PREFIX}_REDIS_PORT", 6379),
+    "Port of the redis server.",
+)
+
 flags.mark_flag_as_required("token")
 flags.mark_flag_as_required("repodir")
+flags.mark_flag_as_required("redis_host")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Manually init flags so they're available to workers
     FLAGS(sys.argv)
-    app.repos = get_available_repos(FLAGS.repodir)  # type: ignore[attr-defined]
-    app.locks = {}  # type: ignore[attr-defined]
+    app.state.repos = get_available_repos(FLAGS.repodir)
+    app.state.locks = {}
+    logger.setLevel(logging.DEBUG if FLAGS.dev else logging.INFO)
+    app.state.log = logging.getLogger("uvicorn.error")
     yield
 
 
-FLAGS(sys.argv)
+# FLAGS(sys.argv)
 app = FastAPI(lifespan=lifespan)
-log = logging.getLogger("uvicorn.error")
-logger.setLevel(logging.DEBUG if FLAGS.dev else logging.INFO)
+
+
+class Lock:
+    __repo: str
+    cache: Cache
+
+    @classmethod
+    async def create(cls, repo: str, pid: int) -> "Lock":
+        if not psutil.pid_exists(pid):
+            raise ValueError(f"Not a valid pid: {pid}")
+
+        self = Lock()
+        self.__repo = repo
+        self.cache = Cache(
+            Cache.REDIS,
+            endpoint=FLAGS.redis_host,
+            port=FLAGS.redis_port,
+            namespace=f"{PREFIX}:{repo}",
+        )
+        await self.cache.set("pid", pid)
+        return self
+
+    @property
+    def repo(self) -> str:
+        return self.__repo
+
+    @property
+    async def pid(self) -> int:
+        return await self.cache.get("pid")
+
+    async def kill(self) -> None:
+        pid = await self.pid
+        os.kill(pid, signal.SIGTERM)
+
+    async def terminate(self) -> None:
+        await self.cache.delete("pid")
 
 
 @app.get("/")
@@ -93,34 +145,32 @@ async def lock(
                 sock.settimeout(timeout_seconds)
                 sock_path = socket_dir / Path(f"{PREFIX}_envoy.sock")
                 start_envoy(repo_path, sock_path, timeout_seconds)
-                log.info(f"Started envoy, waiting on {sock_path}")
+                app.state.log.info(f"Started envoy, waiting on {sock_path}")
                 sock.bind(bytes(sock_path))
-                log.info("waiting for a connection")
                 sock.listen(1)
                 try:
                     connection, _ = sock.accept()
-                    log.debug("Envoy connected")
+                    app.state.log.debug("Envoy connected")
                 except socket.timeout:
-                    log.info("Envoy timed out, cannot acquire lock!")
+                    app.state.log.info("Envoy timed out, cannot acquire lock!")
                     raise HTTPException(status_code=423)  # HTTP error: Locked
                 try:
                     while True:
                         data = connection.recv(16)
-                        log.debug(f"Received: {str(data)}")
+                        pid = int.from_bytes(data)
+                        app.state.log.debug(f"Envoy pid: {pid}")
                         if not data:
-                            log.debug("Transmission done")
+                            # When transmission ends we stop listening
                             break
                         else:
-                            if data == SocketMessage.LOCK_ACQUIRED.value:
-                                log.info("Envoy confirmed lock")
-                                app.locks[repo] = Lock(
-                                    socket=sock_path, pid=42, locked=True
-                                )  # type: ignore[attr-defined]
-                                break
+                            app.state.log.info("Envoy confirmed lock")
+                            lock = await Lock.create(repo, pid)
+                            app.state.locks[repo] = lock
+                            break
 
                 finally:
                     connection.close()
-            return {"message": f"Locked {repo}."}
+            return {"message": f"Locked {repo}.", "pid": pid}
         else:
             raise HTTPException(status_code=404)
     else:
@@ -128,18 +178,33 @@ async def lock(
 
 
 @app.get("/unlock/{repo}")
-async def unlock(repo: str):
-    return {"message": "Not yet implemented"}
+async def unlock(repo: str, pid: int):
+    if repo not in app.state.locks:
+        raise HTTPException(status_code=404)
+    lock = app.state.locks[repo]
+    if pid != await lock.pid:
+        raise HTTPException(status_code=403)
+    try:
+        await lock.kill()  # Kill the envoy releasing the lock
+    except OSError as e:
+        raise ValueError(f"Unable to kill envoy: {e}")
+    finally:
+        await lock.terminate()  # Clear lock state from cache
+        del app.state.locks[repo]
+        return {"message": "Unlocked"}
 
 
 @app.get("/status/{repo}")
 async def status(repo: str):
-    return {"message": "Not yet implemented"}
+    if repo not in app.state.locks:
+        return {"message": "Unknown"}
+    pid = await app.state.locks[repo].pid
+    return {"message": "Locked", "pid": pid}
 
 
 @app.get("/list")
 async def list_locks():
-    return {"repos": app.locks}  # type: ignore[attr-defined]
+    return {"repos": app.state.repos}
 
 
 # Get all directories under the given paths
@@ -149,14 +214,14 @@ def get_available_repos(directory: str) -> list[Path]:
 
 
 def get_repo_path(target: str) -> Optional[Path]:
-    for repo in app.repos:  # type: ignore[attr-defined]
+    for repo in app.state.repos:  # type: ignore[attr-defined]
         if repo.name == target:
             return repo
     return None
 
 
 def start_envoy(repo: Path, socket: Path, timeout_seconds: int):
-    log.debug(f"Envoy launching for {socket}")
+    app.state.log.debug(f"Envoy launching for {socket}")
     subprocess.Popen(
         [
             "borg",
@@ -170,7 +235,11 @@ def start_envoy(repo: Path, socket: Path, timeout_seconds: int):
 
 
 def run():
-    FLAGS(sys.argv)
+    absl_app.run(uvicorn_run)
+
+
+def uvicorn_run(argv):
+    del argv
     uvicorn.run(
         "borg_lockservice.service:app",
         host=FLAGS.host,
