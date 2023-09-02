@@ -222,7 +222,7 @@ async def list_locks(
     if token.credentials != FLAGS.token:
         raise HTTPException(status_code=403)
 
-    return {"repos": app.state.repos}
+    return {"repos": [repo.name for repo in app.state.repos]}
 
 
 # Get all directories under the given paths
