@@ -208,6 +208,8 @@ async def status(
 ):
     if token.credentials != FLAGS.token:
         raise HTTPException(status_code=403)
+    if not get_repo_path(repo):
+        raise HTTPException(status_code=404)
     if repo not in app.state.locks:
         return {"message": "Unknown"}
 
