@@ -8,10 +8,10 @@ FROM poetry_builder as builder
 RUN mkdir /build
 WORKDIR /build
 RUN apt update && apt install -y build-essential libfuse-dev libacl1-dev
-RUN pip wheel borgbackup
 COPY borg_lockservice ./borg_lockservice
 COPY README.md ./README.md
 COPY poetry.lock pyproject.toml ./
+RUN poetry run pip wheel borgbackup
 RUN poetry build -f wheel
 
 
