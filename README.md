@@ -1,5 +1,12 @@
 This is highly WIP. The design intent is to have a tiny service running on the node with borgbackup repos to handle locking them. This allows dependent upstream services, such as offsite sync jobs, to perform their work without having write access to the repositories.
 
+## Known issues to get this out of early-WIP-devstate
+- While creating, querying and releasing a lock works even with multiworker, not so much for a queued second lock.
+- Stale redis state is left behind if locks are released by process control.
+- The API response language is super unstable and subject to change.
+- Metrics exporting needs to be added to aid in monitoring stale locks.
+- Process control in unconfirmed with docker + multiworker
+
 ## Runtime requirements
 - A Redis service, the address provided with the `--redis_host` flag.
 - A Bearer Token, provided with the `--token` flag. Providing a matching token is required for all API calls.
