@@ -11,7 +11,7 @@ packages = [{include = "borg_lockservice"}]
 python = "^3.11"
 uvicorn = {extras = ["standard"], version = "^0.23.2"}
 absl-py = "^1.4.0"
-fastapi = "^0.101.1"
+fastapi = "^0.109.1"
 borgbackup = "^1.2.5"
 aiocache = {extras = ["redis"], version = "^0.12.2"}
 psutil = "^5.9.5"
