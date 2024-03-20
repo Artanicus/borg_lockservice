@@ -18,7 +18,7 @@ psutil = "^5.9.5"
 
 
 [tool.poetry.group.dev.dependencies]
-black = "^23.7.0"
+black = "^24.3.0"
 flake8 = "^6.1.0"
 mypy = "^1.5.1"
 types-pyyaml = "^6.0.12.11"
